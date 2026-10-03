@@ -1,0 +1,224 @@
+{
+  "name": "Resume AI Analyzer Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resume-analyze",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        300
+      ],
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "resume",
+        "destinationVariableName": "extracted_text"
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        420,
+        300
+      ],
+      "id": "extract-pdf-text",
+      "name": "Extract PDF Text"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert HR AI Resume Parser. Analyze the resume text and match it against the job description. Return ONLY a raw JSON object with keys: candidate_name, email, phone, total_experience_years, top_skills (array), match_score (0-100 number), summary, missing_skills (array). Do not include markdown code blocks or extra text."
+            },
+            {
+              "role": "user",
+              "content": "=Job Description:\n{{ $json.body.job_description || \"General Technical Role\" }}\n\nResume Text:\n{{ $json.extracted_text }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ],
+      "id": "openai-analysis",
+      "name": "OpenAI Resume Analyzer",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI text output into clean JSON object\nconst responseText = $input.first().json.message.content;\nlet cleanData;\ntry {\n  const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();\n  cleanData = JSON.parse(cleanText);\n} catch (e) {\n  cleanData = {\n    candidate_name: \"Parse Error\",\n    email: \"N/A\",\n    phone: \"N/A\",\n    total_experience_years: 0,\n    top_skills: [],\n    match_score: 0,\n    summary: responseText,\n    missing_skills: []\n  };\n}\nreturn [{ json: cleanData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "id": "parse-json-code",
+      "name": "Parse JSON Output"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Candidates Database"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Candidate Name": "={{ $json.candidate_name }}",
+            "Email": "={{ $json.email }}",
+            "Match Score": "={{ $json.match_score }}",
+            "Top Skills": "={{ $json.top_skills.join(', ') }}",
+            "Summary": "={{ $json.summary }}"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1080,
+        200
+      ],
+      "id": "google-sheets-log",
+      "name": "Save to Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_HR_EMAIL@domain.com",
+        "subject": "=New Candidate Analyzed: {{ $json.candidate_name }} (Match: {{ $json.match_score }}%)",
+        "message": "=Candidate Name: {{ $json.candidate_name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\nMatch Score: {{ $json.match_score }}%\n\nTop Skills: {{ $json.top_skills.join(', ') }}\nMissing Skills: {{ $json.missing_skills.join(', ') }}\n\nSummary:\n{{ $json.summary }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1080,
+        400
+      ],
+      "id": "gmail-notification",
+      "name": "Send HR Notification Email",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        300
+      ],
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Resume Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Resume Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Output": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send HR Notification Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
